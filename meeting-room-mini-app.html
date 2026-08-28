@@ -404,11 +404,17 @@
 
 <!-- Edit / delete modal, opened by tapping an existing booking -->
 <div class="modal-overlay" id="editModal">
+<!-- Booking modal: used both for creating a new booking and editing an existing one -->
+<div class="modal-overlay" id="editModal">
   <div class="modal-sheet">
-    <h3>Edit booking</h3>
+    <h3 id="editModalTitle">New booking</h3>
     <p class="modal-sub" id="editModalSub"></p>
+    <label>Room</label>
+    <select id="editRoom"></select>
     <label>Meeting name</label>
-    <input type="text" id="editTitle">
+    <input type="text" id="editTitle" placeholder="e.g. Vendor call — Sonos">
+    <label>Booked by</label>
+    <input type="text" id="editBookedBy" placeholder="Your name">
     <div class="modal-row-2">
       <div>
         <label>Start</label>
@@ -630,7 +636,7 @@ function renderDayBookings() {
       el.style.height = height + "px";
       el.style.background = info.bg;
       el.style.borderLeft = `3px solid ${info.border}`;
-      el.innerHTML = `<div class="block-title" style="color:${info.text}">${fmt(b.start)}–${fmt(b.end)}</div><div class="block-sub" style="color:${info.text}">${b.title}</div>`;
+      el.innerHTML = `<div class="block-title" style="color:${info.text}">${fmt(b.start)}–${fmt(b.end)}</div><div class="block-sub" style="color:${info.text}">${b.title}${b.bookedBy ? " · " + b.bookedBy : ""}</div>`;
       el.addEventListener("click", (e) => {
         e.stopPropagation();
         openEditModal(room, idx);
@@ -701,7 +707,7 @@ window.addEventListener("touchend", onUp);
 document.getElementById("confirmBtn").addEventListener("click", () => {
   const btn = document.getElementById("confirmBtn");
   if (btn.disabled) return;
-  alert(`Booked "${btn.dataset.room}" on ${isoDate(activeDate)} from ${fmt(Number(btn.dataset.start))} to ${fmt(Number(btn.dataset.end))}`);
+  openNewBookingModal(btn.dataset.room, Number(btn.dataset.start), Number(btn.dataset.end));
 });
 
 // ==================== WEEK VIEW ====================
@@ -790,11 +796,7 @@ function renderDateStrip() {
 }
 
 document.getElementById("newBookingBtn").addEventListener("click", () => {
-  const card = document.querySelector("#dayView .card");
-  card.scrollIntoView({ behavior: "smooth", block: "center" });
-  card.style.transition = "box-shadow 0.15s";
-  card.style.boxShadow = "0 0 0 2px var(--sel-border)";
-  setTimeout(() => { card.style.boxShadow = "none"; }, 900);
+  openNewBookingModal(ROOMS[0].name, GRID_START_MIN, GRID_START_MIN + 60);
 });
 
 // ---- Render dispatch ----
@@ -806,7 +808,7 @@ function renderAll() {
   else renderMonthView();
 }
 
-// ==================== EDIT / DELETE MODAL ====================
+// ==================== BOOKING MODAL (new + edit) ====================
 function buildTimeOptions(selectEl, selectedMin) {
   selectEl.innerHTML = "";
   for (let min = GRID_START_MIN; min <= GRID_END_MIN; min += ROW_MIN) {
@@ -818,24 +820,59 @@ function buildTimeOptions(selectEl, selectedMin) {
   }
 }
 
-let editingRoom = null;
-let editingIdx = null;
+let modalMode = null;   // "new" or "edit"
+let originalRoom = null;
+let originalIdx = null;
+
+function populateRoomSelect(selected) {
+  const sel = document.getElementById("editRoom");
+  sel.innerHTML = "";
+  ROOMS.forEach(r => {
+    const opt = document.createElement("option");
+    opt.value = r.name;
+    opt.textContent = r.short;
+    if (r.name === selected) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function openNewBookingModal(room, startMin, endMin) {
+  modalMode = "new";
+  originalRoom = null;
+  originalIdx = null;
+  document.getElementById("editModalTitle").textContent = "New booking";
+  document.getElementById("editModalSub").textContent = activeDate.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  populateRoomSelect(room);
+  document.getElementById("editTitle").value = "";
+  document.getElementById("editBookedBy").value = "";
+  buildTimeOptions(document.getElementById("editStart"), startMin);
+  buildTimeOptions(document.getElementById("editEnd"), endMin);
+  document.getElementById("editDelete").style.display = "none";
+  document.getElementById("editError").classList.remove("show");
+  document.getElementById("editModal").classList.add("open");
+}
 
 function openEditModal(room, idx) {
-  editingRoom = room;
-  editingIdx = idx;
+  modalMode = "edit";
+  originalRoom = room;
+  originalIdx = idx;
   const b = getBookings(activeDate, room)[idx];
-  document.getElementById("editModalSub").textContent = `${room} · ${activeDate.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}`;
+  document.getElementById("editModalTitle").textContent = "Edit booking";
+  document.getElementById("editModalSub").textContent = activeDate.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  populateRoomSelect(room);
   document.getElementById("editTitle").value = b.title;
+  document.getElementById("editBookedBy").value = b.bookedBy || "";
   buildTimeOptions(document.getElementById("editStart"), b.start);
   buildTimeOptions(document.getElementById("editEnd"), b.end);
+  document.getElementById("editDelete").style.display = "block";
   document.getElementById("editError").classList.remove("show");
   document.getElementById("editModal").classList.add("open");
 }
 function closeEditModal() {
   document.getElementById("editModal").classList.remove("open");
-  editingRoom = null;
-  editingIdx = null;
+  modalMode = null;
+  originalRoom = null;
+  originalIdx = null;
 }
 document.getElementById("editModal").addEventListener("click", (e) => {
   if (e.target.id === "editModal") closeEditModal();
@@ -843,16 +880,17 @@ document.getElementById("editModal").addEventListener("click", (e) => {
 document.getElementById("editCancel").addEventListener("click", closeEditModal);
 
 document.getElementById("editDelete").addEventListener("click", () => {
-  if (editingRoom === null) return;
+  if (modalMode !== "edit") return;
   const key = isoDate(activeDate);
-  bookingsData[key][editingRoom].splice(editingIdx, 1);
+  bookingsData[key][originalRoom].splice(originalIdx, 1);
   closeEditModal();
   renderDayBookings();
 });
 
 document.getElementById("editSave").addEventListener("click", () => {
-  if (editingRoom === null) return;
+  const selectedRoom = document.getElementById("editRoom").value;
   const title = document.getElementById("editTitle").value.trim();
+  const bookedBy = document.getElementById("editBookedBy").value.trim();
   const startMin = Number(document.getElementById("editStart").value);
   const endMin = Number(document.getElementById("editEnd").value);
   const errorEl = document.getElementById("editError");
@@ -862,20 +900,37 @@ document.getElementById("editSave").addEventListener("click", () => {
     errorEl.classList.add("show");
     return;
   }
+  if (!bookedBy) {
+    errorEl.textContent = "Enter who's booking.";
+    errorEl.classList.add("show");
+    return;
+  }
   if (endMin <= startMin) {
     errorEl.textContent = "End time must be after start time.";
     errorEl.classList.add("show");
     return;
   }
-  const bookings = getBookings(activeDate, editingRoom);
-  const conflict = bookings.some((b, i) => i !== editingIdx && startMin < b.end && endMin > b.start);
+  const sameBookingIdx = (modalMode === "edit" && selectedRoom === originalRoom) ? originalIdx : -1;
+  const bookings = getBookings(activeDate, selectedRoom);
+  const conflict = bookings.some((b, i) => i !== sameBookingIdx && startMin < b.end && endMin > b.start);
   if (conflict) {
     errorEl.textContent = "This overlaps another booking in this room.";
     errorEl.classList.add("show");
     return;
   }
 
-  bookings[editingIdx] = { start: startMin, end: endMin, title };
+  const key = isoDate(activeDate);
+  bookingsData[key] = bookingsData[key] || {};
+  bookingsData[key][selectedRoom] = bookingsData[key][selectedRoom] || [];
+
+  if (modalMode === "edit" && selectedRoom === originalRoom) {
+    bookingsData[key][selectedRoom][originalIdx] = { start: startMin, end: endMin, title, bookedBy };
+  } else {
+    if (modalMode === "edit") {
+      bookingsData[key][originalRoom].splice(originalIdx, 1);
+    }
+    bookingsData[key][selectedRoom].push({ start: startMin, end: endMin, title, bookedBy });
+  }
   closeEditModal();
   renderDayBookings();
 });
